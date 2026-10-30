@@ -62,9 +62,13 @@ function decodeValue(f: { no: number; wire: number; data: any }[]): any {
 }
 
 export class GeminiLive {
-  // official Live models, tried in order until one accepts the setup
-  static CANDIDATES = ['models/gemini-live-2.5-flash-preview', 'models/gemini-2.0-flash-live-001', 'models/gemini-2.5-flash-native-audio-preview-09-2025']
+  // newest first; used when the key's model list can't be fetched
+  static CANDIDATES = ['models/gemini-3.8-flash-live', 'models/gemini-3.1-flash-live-preview', 'models/gemini-live-2.5-flash-preview', 'models/gemini-2.0-flash-live-001', 'models/gemini-2.5-flash-native-audio-preview-09-2025']
+  // preference when picking from the key's actual model list (3.8 live first, as requested)
+  static PREFERENCE = ['gemini-3.8-flash-live', 'gemini-3.8-flash-native-audio', 'gemini-3.1-flash-live', 'gemini-live-2.5-flash-preview', 'gemini-2.5-flash-native-audio', 'gemini-2.0-flash-live']
   private modelIdx = 0
+  private rejected = new Set<string>()
+  private nextStart = 0
   private userStopped = false
   private ws: WebSocket | null = null
   private ctx: AudioContext | null = null
@@ -105,9 +109,35 @@ export class GeminiLive {
     }
     this.openWs()
   }
-  private openWs() {
+  // pick the best Live model the key actually has: 3.8 live first, then down the line
+  private async pickModel(key: string): Promise<string | null> {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1000`)
+      const j = await r.json()
+      if (!j.error) {
+        const live: string[] = (j.models ?? []).map((m: any) => m.name)
+          .filter((n: string) => /live|native-audio/i.test(n) && !this.rejected.has(n))
+        for (const pat of GeminiLive.PREFERENCE) {
+          const hit = live.find(n => n.toLowerCase().includes(pat))
+          if (hit) return hit
+        }
+        if (live.length) return live[0]
+        return null
+      }
+    } catch { /* list unavailable -> static chain */ }
+    while (this.modelIdx < GeminiLive.CANDIDATES.length && this.rejected.has(GeminiLive.CANDIDATES[this.modelIdx])) this.modelIdx++
+    if (this.modelIdx >= GeminiLive.CANDIDATES.length) return null
+    return GeminiLive.CANDIDATES[this.modelIdx++]
+  }
+  private async openWs() {
     const key = getSettings().apiKey
-    const model = GeminiLive.CANDIDATES[this.modelIdx]
+    const model = await this.pickModel(key)
+    if (!model) {
+      this.ev.onError?.('Kein nutzbares Live-Modell für diesen Key gefunden.')
+      this.probeModels(key)
+      this.stop()
+      return
+    }
     this.ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`)
     this.ws.onopen = () => {
       this.ws!.send(JSON.stringify({
@@ -118,6 +148,7 @@ export class GeminiLive {
           tools: LIVE_TOOLS
         }
       }))
+      this.ev.onText?.(`[Live-Modell: ${model.replace('models/', '')}]`, true)
       this.setState('listening')
     }
     this.ws.onmessage = (e) => this.handle(e.data)
@@ -130,16 +161,9 @@ export class GeminiLive {
     this.ws.onclose = (e) => {
       if (this.userStopped) return
       const detail = e.reason ? ` (${e.reason})` : ` (Code ${e.code})`
-      // server rejected the setup -> try the next official Live model
-      if (this.modelIdx < GeminiLive.CANDIDATES.length - 1) {
-        this.modelIdx += 1
-        this.ev.onError?.(`${model} abgelehnt${detail}, probiere ${GeminiLive.CANDIDATES[this.modelIdx]}…`)
-        this.openWs()
-        return
-      }
-      this.ev.onError?.('Verbindung getrennt' + detail)
-      this.probeModels(key)
-      this.stop()
+      this.rejected.add(model)
+      this.ev.onError?.(`${model.replace('models/', '')} abgelehnt${detail}, probiere nächstes Live-Modell…`)
+      this.openWs()
     }
   }
   // list which Live models the key actually has access to, and show it
@@ -217,7 +241,10 @@ export class GeminiLive {
     const src = this.ctx!.createBufferSource(); src.buffer = buf
     const g = this.ctx!.createGain(); src.connect(g).connect(this.outGain!)
     src.onended = () => { this.queue = this.queue.filter(q => q.src !== src); this.playing--; if (this.playing === 0 && this.state === 'speaking') this.setState('listening') }
-    src.start(); this.queue.push({ src, g }); this.playing++
+    // play chunks strictly back to back, never on top of each other
+    const t0 = Math.max(this.ctx!.currentTime + 0.05, this.nextStart)
+    src.start(t0); this.nextStart = t0 + buf.duration
+    this.queue.push({ src, g }); this.playing++
   }
   // Barge-in: stop audio output instantly, clear the buffer, model switches to listening
   private bargeIn() {
@@ -225,7 +252,7 @@ export class GeminiLive {
   }
   private clearPlayback() {
     for (const q of this.queue) { try { q.src.stop() } catch {} }
-    this.queue = []; this.playing = 0
+    this.queue = []; this.playing = 0; this.nextStart = 0
     if (this.state === 'speaking') this.setState('listening')
   }
   setMuted(m: boolean) { this.muted = m }
