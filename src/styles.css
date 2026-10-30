@@ -1,0 +1,19 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body { background: #08090A; color: #F7F8F8; font-family: "Inter Tight", Inter, system-ui, sans-serif; -webkit-font-smoothing: antialiased; }
+* { border-color: rgba(255,255,255,0.07); }
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-thumb { background: #26272E; border-radius: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+textarea, input { outline: none; }
+.kbd { @apply font-mono text-[10px] px-1.5 py-0.5 rounded bg-ink-700 text-zinc-400 border border-white/10; }
+.card-surface { @apply bg-ink-800 border border-white/[0.06] rounded-xl; }
+.btn { @apply px-3 py-1.5 rounded-lg text-sm font-medium transition-colors duration-150; }
+.btn-primary { @apply btn bg-indigo-500/90 hover:bg-indigo-400 text-white; }
+.btn-ghost { @apply btn bg-ink-750 hover:bg-ink-700 text-zinc-300 border border-white/[0.06]; }
+.field { @apply w-full bg-ink-850 border border-white/[0.07] rounded-lg px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600; }
+.field:focus { border-color: rgba(99,102,241,0.55); }
+.chip { @apply inline-flex items-center gap-1 text-xs font-mono px-2 py-0.5 rounded-md bg-ink-750 border border-white/[0.07] text-zinc-400; }
