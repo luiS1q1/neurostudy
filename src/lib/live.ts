@@ -77,6 +77,8 @@ export class GeminiLive {
   private setupDone = false
   private sessionId = Date.now()
   thinkHold = false
+  private manualVad = true
+  private vadRetried = false
   private actActive = false
   private silenceFrames = 0
   private lastModelSignal = 0
@@ -112,7 +114,7 @@ export class GeminiLive {
   // Denk-Pause loslassen: jetzt bekommt der Tutor das "der Schüler ist fertig"-Signal
   releaseHold() {
     this.thinkHold = false
-    if (this.actActive) { this.actActive = false; this.silenceFrames = 0; this.sendActivity('end') }
+    if (this.manualVad && this.actActive) { this.actActive = false; this.silenceFrames = 0; this.sendActivity('end') }
   }
   private sendActivity(kind: 'start' | 'end') {
     if (this.ws && this.ws.readyState === 1 && this.setupDone) {
@@ -137,6 +139,8 @@ export class GeminiLive {
     this.modelIdx = 0
     this.sessionId = Date.now()
     this.thinkHold = false
+    this.manualVad = true
+    this.vadRetried = false
     this.actActive = false
     this.silenceFrames = 0
     this.kicks = 0
@@ -159,9 +163,10 @@ export class GeminiLive {
       this.ev.onAmplitude?.(rms)
       const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)))
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
+      if (!this.manualVad && this.thinkHold) return // Fallback ohne manuelle Erkennung: in der Denk-Pause stumm
       this.sendAudio(b64)
       // manuelle Aktivitätserkennung: der Ton geht immer durch, wir halten nur das "fertig"-Signal zurück
-      if (this.muted) return
+      if (this.muted || !this.manualVad) return
       if (rms > 0.05) {
         this.silenceFrames = 0
         if (!this.actActive) { this.actActive = true; this.sendActivity('start') }
@@ -218,7 +223,7 @@ export class GeminiLive {
           tools: LIVE_TOOLS,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          automaticActivityDetection: { disabled: true }
+          realtimeInputConfig: { automaticActivityDetection: { disabled: true } }
         }
       }))
       this.ev.onText?.(`[Live-Modell: ${model.replace('models/', '')}]`, true)
@@ -234,6 +239,16 @@ export class GeminiLive {
     this.ws.onclose = (e) => {
       if (this.userStopped) return
       const detail = e.reason ? ` (${e.reason})` : ` (Code ${e.code})`
+      const reason = e.reason ?? ''
+      if (reason.includes('automaticActivityDetection') && this.manualVad && !this.vadRetried) {
+        // manuelle Aktivitätserkennung wird hier nicht akzeptiert: gleiche Verbindung ohne sie erneut versuchen
+        this.vadRetried = true
+        this.manualVad = false
+        this.rejected.delete(model)
+        this.ev.onError?.(`Manuelle Aktivitätserkennung nicht verfügbar, Fallback aktiv…`)
+        this.openWs()
+        return
+      }
       this.rejected.add(model)
       this.ev.onError?.(`${model.replace('models/', '')} abgelehnt${detail}, probiere nächstes Live-Modell…`)
       this.openWs()
@@ -347,7 +362,7 @@ export class GeminiLive {
   }
   setMuted(m: boolean) {
     const was = this.muted; this.muted = m
-    if (m && !was && this.actActive) { this.actActive = false; this.sendActivity('end') }
+    if (m && !was && this.manualVad && this.actActive) { this.actActive = false; this.sendActivity('end') }
   }
   sendText(t: string) {
     if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: t }] }], turnComplete: true } }))
