@@ -8,7 +8,7 @@ const MODEL = 'models/gemini-live-2.5-flash-preview'
 export const SYSTEM_INSTRUCTION = `Du bist ein strenger, sokratischer Lernmentor in der App NeuroStudy OS. Du gibst NIE fertige Lösungen oder lange Erklärvorträge. Statt dessen: stelle präzise Gegenfragen, lasse den Schüler Schlussfolgerungen selbst ziehen, decke logische Fehler schonend aber direkt auf, fordere Beweise für Aussagen ("Warum stimmt das?"), und halte deine Antworten kurz (2-4 Sätze), klar und motivierend-streng. Sprich Deutsch. Wenn der Schüler etwas verstanden hat, verlange die Zusammenfassung in eigenen Worten.
 Du kannst Werkzeuge aufrufen, während du sprichst: startTimer (Lernsitzung), addFlashcard (Karteikarte), triggerBlurting (Blurting-Übung), logKnowledgeGap (Schwachstelle notieren). Nutze sie proaktiv, wenn der Schüler es signalisiert oder eine Lücke sichtbar wird.
 Du hast eine geteilte Leinwand (Space), die der Schüler live sieht: Lege dort Karten mit addCanvasCard. AUFGABENSTELLUNGEN legst du IMMER als Karte ab (kind: text), Quizfragen als kind: quiz mit options und answer (0-basierter Index der richtigen Option), Konzepte und Diagramme als kind: diagram mit einfachem, beschriftetem SVG-Markup, Kerndefinitionen als kind: flashcard. Sortiere die Leinwand mit arrangeCanvas, wenn sie unordentlich wirkt. Schlage bei Fachfragen zuerst mit searchDump im Lernmaterial des Schülers nach statt aus dem Gedächtnis zu antworten.
-Du kennst die Lernmethoden der App und wählst passend: Faktenwissen -> atomare addFlashcard-Karten oder quiz-Karten auf der Leinwand; Verständnis -> Feynman-Simulator (startFeynman) oder Blurting (triggerBlurting); Fokus -> startTimer; Schwächen -> logKnowledgeGap. addFlashcard: GENAU EIN Fakt pro Karte, front ist eine konkrete Frage (kein Ja/Nein), back die knappe Antwort, topic = Fach und Stichwort.`
+Du kennst die Lernmethoden der App und wählst passend: Faktenwissen -> atomare addFlashcard-Karten oder quiz-Karten auf der Leinwand; Verständnis -> Feynman-Simulator (startFeynman) oder Blurting (triggerBlurting); Fokus -> startTimer; Schwächen -> logKnowledgeGap. addFlashcard: GENAU EIN Fakt pro Karte, front ist eine konkrete Frage (kein Ja/Nein), back die knappe Antwort, topic = Fach und Stichwort. Beginne die Arbeit sofort und erzähle niemals "hab etwas Geduld" oder kündige Arbeit an, ohne sie sofort zu machen. Bei addCanvasCard mit diagram: kompakte SVGs (höchstens ~60 Zeilen), damit die Antwort nicht Minuten braucht.`
 
 const LIVE_TOOLS = [{
   functionDeclarations: [
@@ -78,6 +78,10 @@ export class GeminiLive {
   private sessionId = Date.now()
   thinkHold = false
   private holdBuf: string[] = []
+  private lastModelSignal = 0
+  private awaitingTool = false
+  private kicks = 0
+  private watchdog: any = null
   private rejected = new Set<string>()
   private nextStart = 0
   private userStopped = false
@@ -93,6 +97,17 @@ export class GeminiLive {
   ev: LiveEvents
   constructor(ev: LiveEvents = {}) { this.ev = ev }
   private setState(s: LiveState) { this.state = s; this.ev.onState?.(s) }
+  // Werkzeug-Hänger: antwortet das Modell nach einem Tool-Aufruf 15 s lang nicht, stoßen wir es an (max. 2x)
+  private checkHang() {
+    if (this.state === 'idle' || !this.ws || this.ws.readyState !== 1) return
+    if (this.awaitingTool && this.kicks < 2 && Date.now() - this.lastModelSignal > 15000) {
+      this.kicks++
+      this.awaitingTool = false
+      this.ev.onText?.('[Der Tutor hat nach einem Werkzeugaufruf geschwiegen - ich stoße ihn an]', false)
+      this.sendText('Führe deine Aufgabe fort.')
+      this.lastModelSignal = Date.now()
+    }
+  }
   // Denk-Pause loslassen: den gepufferten Ton nachschieben, dann streamt es wieder live
   releaseHold() {
     this.thinkHold = false
@@ -116,6 +131,11 @@ export class GeminiLive {
     this.sessionId = Date.now()
     this.thinkHold = false
     this.holdBuf = []
+    this.kicks = 0
+    this.awaitingTool = false
+    this.lastModelSignal = Date.now()
+    if (this.watchdog) clearInterval(this.watchdog)
+    this.watchdog = setInterval(() => this.checkHang(), 5000)
     this.setState('connecting')
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
@@ -222,6 +242,7 @@ export class GeminiLive {
     if (data instanceof Blob) data = await data.text()
     if (typeof data === 'string') return this.handleJson(JSON.parse(data))
     const fields = parseFields(new Uint8Array(data))
+    this.lastModelSignal = Date.now()
     for (const f of fields) {
       if (f.no === 1) { this.setupDone = true; this.ev.onText?.('[Setup abgeschlossen]', true) }
       else if (f.no === 2) this.parseServerContent(parseFields(f.data as Uint8Array))
@@ -229,6 +250,7 @@ export class GeminiLive {
     }
   }
   private handleJson(msg: any) {
+    this.lastModelSignal = Date.now()
     if (msg.error) { this.ev.onError?.(`Gemini Live: ${msg.error.message ?? msg.error.status ?? JSON.stringify(msg.error).slice(0, 200)}`); return }
     if (msg.setupComplete) { this.setupDone = true; this.ev.onText?.('[Setup abgeschlossen]', true) }
     // extended-thinking models: turnComplete no longer means idle, only IDLE does
@@ -243,6 +265,7 @@ export class GeminiLive {
     if (uText) { this.log('user', uText); this.ev.onText?.(`Du: ${uText}`, false) }
     const hasModelText = (sc.modelTurn?.parts ?? []).some((p: any) => p.text)
     const oText = sc.outputTranscription?.text
+    if (hasModelText || oText) this.awaitingTool = false
     if (oText && !hasModelText) { this.log('model', oText); this.ev.onText?.(oText, false) }
     // interrupted?
     const interrupted = sc.interrupted ?? (sc.interrupted !== undefined)
@@ -285,7 +308,7 @@ export class GeminiLive {
   }
   private sendToolResponse(name: string, id?: string, response?: any) {
     const resp: any = { toolResponse: { functionResponses: [{ id, name, response: response ?? { result: 'ok' } }] } }
-    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify(resp))
+    if (this.ws?.readyState === 1) { this.ws.send(JSON.stringify(resp)); this.awaitingTool = true; this.lastModelSignal = Date.now() }
   }
   private playPcm24k(b64: string) {
     const bin = atob(b64); const n = bin.length >> 1
@@ -328,5 +351,6 @@ export class GeminiLive {
     this.worklet?.disconnect(); this.ctx?.close(); this.micStream?.getTracks().forEach(t => t.stop())
     this.ws = null; this.worklet = null; this.ctx = null; this.micStream = null
     this.setState('idle')
+    if (this.watchdog) { clearInterval(this.watchdog); this.watchdog = null }
   }
 }
