@@ -59,16 +59,9 @@ export default function App() {
       if (typing) return
       if (e.code === 'Space') { e.preventDefault(); timerEngine.toggle() }
       if (e.key.toLowerCase() === 'm') { const l = orbRef.current; if (l && l.state !== 'idle') { const m = !l.muted; l.setMuted(m) } }
-      if (e.key === 'Shift') { const l = orbRef.current; if (l && l.state !== 'idle' && !l.thinkHold) { l.thinkHold = true; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: true })) } }
     }
-    const up = (e: KeyboardEvent) => {
-      if (e.key === 'Shift' && orbRef.current?.thinkHold) { orbRef.current.releaseHold(); window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) }
-    }
-    const blur = () => { const l = orbRef.current; if (l?.thinkHold) { l.releaseHold(); window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) } }
     window.addEventListener('keydown', h)
-    window.addEventListener('keyup', up)
-    window.addEventListener('blur', blur)
-    return () => { window.removeEventListener('keydown', h); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
+    return () => window.removeEventListener('keydown', h)
   }, [])
 
   return (

@@ -27,7 +27,7 @@ export default function VoiceView() {
         </div>
         <div className="flex-1">
           <div className="text-lg font-medium">{on ? (state === 'speaking' ? 'Der Mentor spricht' : state === 'listening' ? 'Er hört zu' : 'Verbinde…') : 'Tutor inaktiv'}</div>
-          <div className="text-xs text-zinc-500 mt-1">Der schwebende Orb unten rechts startet und stoppt die Session. <span className="kbd">M</span> schaltet das Mikro stumm, <span className="kbd">Shift</span> halten = Denk-Pause: dein Ton geht durch, aber der Tutor antwortet erst, wenn du Shift loslässt.</div>
+          <div className="text-xs text-zinc-500 mt-1">Der schwebende Orb unten rechts startet und stoppt die Session. <span className="kbd">M</span> schaltet das Mikro stumm.</div>
         </div>
         <button className={on ? 'btn-ghost flex items-center gap-2' : 'btn-primary flex items-center gap-2'} onClick={() => { const l = orbRef.current!; on ? l.stop() : l.start() }}>
           {on ? <><Square size={13} /> Stoppen</> : <><Zap size={13} /> Session starten</>}

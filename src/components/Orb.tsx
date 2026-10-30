@@ -13,7 +13,6 @@ export function Orb() {
   const [open, setOpen] = useState(false)
   const [transcript, setTranscript] = useState<string[]>([])
   const [toast, setToast] = useState<string>('')
-  const [hold, setHold] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ampRef = useRef(0)
 
@@ -29,11 +28,8 @@ export function Orb() {
       },
       onError: e => { setToast(e); setTimeout(() => setToast(''), 5000) }
     })
-    const hh = (e: any) => setHold(!!e.detail)
-    window.addEventListener('ns-think-hold', hh)
-    ;(live as any)._hh = hh
     orbRef.current = live
-    return () => { window.removeEventListener('ns-think-hold', (live as any)._hh ?? (() => {})); live.stop(); orbRef.current = null }
+    return () => { live.stop(); orbRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -65,7 +61,6 @@ export function Orb() {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {toast && <div className="card-surface px-3 py-2 text-xs text-zinc-200 shadow-xl max-w-xs">{toast}</div>}
-      {hold && <div className="card-surface px-3 py-2 text-xs text-amber-300 shadow-xl">Denk-Pause: der Tutor wartet, bis du Shift loslässt</div>}
       {open && (
         <div className="card-surface w-80 p-3 shadow-2xl">
           <div className="flex items-center justify-between mb-2">
