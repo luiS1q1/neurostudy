@@ -1,23 +1,25 @@
 // Gemini Live voice engine over WebSocket (JSON wire client messages; server messages
 // parsed as JSON when possible, otherwise via a small hand-rolled protobuf walker).
-import { getSettings } from '../store'
+import { getSettings, db } from '../store'
 import { handleAiTool, buildLiveContext } from './knowledge'
 
 const MODEL = 'models/gemini-live-2.5-flash-preview'
 
 export const SYSTEM_INSTRUCTION = `Du bist ein strenger, sokratischer Lernmentor in der App NeuroStudy OS. Du gibst NIE fertige Lösungen oder lange Erklärvorträge. Statt dessen: stelle präzise Gegenfragen, lasse den Schüler Schlussfolgerungen selbst ziehen, decke logische Fehler schonend aber direkt auf, fordere Beweise für Aussagen ("Warum stimmt das?"), und halte deine Antworten kurz (2-4 Sätze), klar und motivierend-streng. Sprich Deutsch. Wenn der Schüler etwas verstanden hat, verlange die Zusammenfassung in eigenen Worten.
 Du kannst Werkzeuge aufrufen, während du sprichst: startTimer (Lernsitzung), addFlashcard (Karteikarte), triggerBlurting (Blurting-Übung), logKnowledgeGap (Schwachstelle notieren). Nutze sie proaktiv, wenn der Schüler es signalisiert oder eine Lücke sichtbar wird.
-Du hast eine geteilte Leinwand (Space), die der Schüler live sieht: Lege dort Karten mit addCanvasCard. AUFGABENSTELLUNGEN legst du IMMER als Karte ab (kind: text), Quizfragen als kind: quiz mit options und answer (0-basierter Index der richtigen Option), Konzepte und Diagramme als kind: diagram mit einfachem, beschriftetem SVG-Markup, Kerndefinitionen als kind: flashcard. Sortiere die Leinwand mit arrangeCanvas, wenn sie unordentlich wirkt. Schlage bei Fachfragen zuerst mit searchDump im Lernmaterial des Schülers nach statt aus dem Gedächtnis zu antworten.`
+Du hast eine geteilte Leinwand (Space), die der Schüler live sieht: Lege dort Karten mit addCanvasCard. AUFGABENSTELLUNGEN legst du IMMER als Karte ab (kind: text), Quizfragen als kind: quiz mit options und answer (0-basierter Index der richtigen Option), Konzepte und Diagramme als kind: diagram mit einfachem, beschriftetem SVG-Markup, Kerndefinitionen als kind: flashcard. Sortiere die Leinwand mit arrangeCanvas, wenn sie unordentlich wirkt. Schlage bei Fachfragen zuerst mit searchDump im Lernmaterial des Schülers nach statt aus dem Gedächtnis zu antworten.
+Du kennst die Lernmethoden der App und wählst passend: Faktenwissen -> atomare addFlashcard-Karten oder quiz-Karten auf der Leinwand; Verständnis -> Feynman-Simulator (startFeynman) oder Blurting (triggerBlurting); Fokus -> startTimer; Schwächen -> logKnowledgeGap. addFlashcard: GENAU EIN Fakt pro Karte, front ist eine konkrete Frage (kein Ja/Nein), back die knappe Antwort, topic = Fach und Stichwort.`
 
 const LIVE_TOOLS = [{
   functionDeclarations: [
     { name: 'startTimer', description: 'Startet den Session-Timer im Timer-Modul.', parameters: { type: 'object', properties: { durationMinutes: { type: 'number', description: 'Dauer in Minuten' }, mode: { type: 'string', enum: ['anti-procrastination', 'pomodoro', 'deep-work', 'custom'] } }, required: ['durationMinutes'] } },
-    { name: 'addFlashcard', description: 'Erzeugt sofort eine neue Karteikarte.', parameters: { type: 'object', properties: { front: { type: 'string' }, back: { type: 'string' }, topic: { type: 'string' }, difficulty: { type: 'number' } }, required: ['front', 'back'] } },
+    { name: 'addFlashcard', description: 'Erzeugt GENAU EINE atomare Karteikarte für den SM-2-Stapel: front = konkrete Frage zu EINEM Fakt (kein Ja/Nein, max. 20 Wörter), back = knappe Antwort (max. 30 Wörter), topic = Fach und Stichwort (z.B. "Bio - Zellatmung"). Keine Sammelkarten ("Alles über X"); für Quiz nutze addCanvasCard mit kind quiz.', parameters: { type: 'object', properties: { front: { type: 'string' }, back: { type: 'string' }, topic: { type: 'string' }, difficulty: { type: 'number', description: '1-5, wie schwer die Karte für den Schüler ist' } }, required: ['front', 'back', 'topic'] } },
     { name: 'triggerBlurting', description: 'Öffnet das Blurting-Studio mit einem Prompt.', parameters: { type: 'object', properties: { promptText: { type: 'string' }, timeLimitMinutes: { type: 'number' } }, required: ['promptText'] } },
     { name: 'logKnowledgeGap', description: 'Schreibt eine Schwachstelle in die 80/20-Matrix.', parameters: { type: 'object', properties: { subject: { type: 'string' }, concept: { type: 'string' }, note: { type: 'string' } }, required: ['subject', 'concept'] } },
     { name: 'addCanvasCard', description: 'Legt eine Karte auf die geteilte Leinwand (Space), die der Schüler sofort sieht. Für Aufgabenstellungen (text), Quiz (quiz), Diagramme (diagram mit svg), Definitionen (flashcard).', parameters: { type: 'object', properties: { kind: { type: 'string', enum: ['text', 'quiz', 'diagram', 'flashcard'] }, title: { type: 'string' }, content: { type: 'string' }, options: { type: 'array', items: { type: 'string' }, description: 'nur bei quiz' }, answer: { type: 'number', description: 'nur bei quiz: Index der richtigen Option, 0-basiert' }, svg: { type: 'string', description: 'nur bei diagram: vollständiges SVG-Markup, deutsch beschriftet' }, back: { type: 'string', description: 'nur bei flashcard: Rückseite (Lösung/Definition)' } }, required: ['kind', 'title', 'content'] } },
     { name: 'arrangeCanvas', description: 'Ordnet die Karten auf der Leinwand neu.', parameters: { type: 'object', properties: { layout: { type: 'string', enum: ['grid', 'byKind', 'custom'] }, positions: { type: 'array', items: { type: 'object', properties: { cardId: { type: 'number' }, title: { type: 'string' }, x: { type: 'number' }, y: { type: 'number' } } } } }, required: ['layout'] } },
-    { name: 'searchDump', description: 'Durchsucht das Lernmaterial des Schülers (Ablage + Leinwand) nach relevanten Stellen.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } }
+    { name: 'searchDump', description: 'Durchsucht das Lernmaterial des Schülers (Ablage + Leinwand) nach relevanten Stellen.', parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] } },
+    { name: 'startFeynman', description: 'Öffnet den Feynman-Simulator, damit der Schüler das Thema in eigenen Worten einfach erklärt.', parameters: { type: 'object', properties: { topic: { type: 'string' } }, required: ['topic'] } }
   ]
 }]
 
@@ -73,6 +75,8 @@ export class GeminiLive {
   static PREFERENCE = ['gemini-3.8-live', 'gemini-3.1-flash-live', 'gemini-live-2.5-flash-preview', 'gemini-2.5-flash-native-audio', 'gemini-2.0-flash-live']
   private modelIdx = 0
   private setupDone = false
+  private sessionId = Date.now()
+  thinkHold = false
   private rejected = new Set<string>()
   private nextStart = 0
   private userStopped = false
@@ -88,6 +92,10 @@ export class GeminiLive {
   ev: LiveEvents
   constructor(ev: LiveEvents = {}) { this.ev = ev }
   private setState(s: LiveState) { this.state = s; this.ev.onState?.(s) }
+  // persistent conversation log: every session lands in IndexedDB and feeds the next ones
+  private log(role: 'user' | 'model' | 'tool', text: string) {
+    try { db.voiceLog.add({ sessionId: this.sessionId, role, text: String(text).slice(0, 2000), at: Date.now() }) } catch { /* offline ok */ }
+  }
 
   async start() {
     if (this.state !== 'idle') return
@@ -95,6 +103,8 @@ export class GeminiLive {
     if (!key) { this.ev.onError?.('Kein API-Key. Erst unter Einstellungen hinterlegen.'); return }
     this.userStopped = false
     this.modelIdx = 0
+    this.sessionId = Date.now()
+    this.thinkHold = false
     this.setState('connecting')
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
@@ -108,6 +118,7 @@ export class GeminiLive {
     this.worklet.port.onmessage = (e) => {
       const { pcm, rms } = e.data
       this.ev.onAmplitude?.(rms)
+      if (this.thinkHold) return // Denk-Pause: nichts senden, kein Barge-in, Modell unterbricht nicht
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
       if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
         // current wire format: realtimeInput.audio (mediaChunks is the legacy field the 3.x models ignore)
@@ -158,7 +169,9 @@ export class GeminiLive {
             ? { responseModalities: ['AUDIO'], thinkingConfig: { thinkingLevel: (getSettings().thinkingLevel || 'low') as any } }
             : { responseModalities: ['AUDIO'] },
           systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }, { text: ctx }] },
-          tools: LIVE_TOOLS
+          tools: LIVE_TOOLS,
+          inputAudioTranscription: {},
+          outputAudioTranscription: {}
         }
       }))
       this.ev.onText?.(`[Live-Modell: ${model.replace('models/', '')}]`, true)
@@ -211,6 +224,11 @@ export class GeminiLive {
     if (!known.some(k => k in msg)) this.ev.onText?.(`[Server: ${Object.keys(msg).join(',')}]`, true)
   }
   private parseServerContent(sc: any) {
+    const uText = sc.inputTranscription?.text
+    if (uText) { this.log('user', uText); this.ev.onText?.(`Du: ${uText}`, false) }
+    const hasModelText = (sc.modelTurn?.parts ?? []).some((p: any) => p.text)
+    const oText = sc.outputTranscription?.text
+    if (oText && !hasModelText) { this.log('model', oText); this.ev.onText?.(oText, false) }
     // interrupted?
     const interrupted = sc.interrupted ?? (sc.interrupted !== undefined)
     if (interrupted !== undefined && interrupted) this.clearPlayback()
@@ -220,7 +238,7 @@ export class GeminiLive {
     if (parts.length) {
       this.setState('speaking')
       for (const p of parts) {
-        if (p.text || (p.parts?.[0]?.text)) { const t = p.text ?? p.parts[0].text; this.ev.onText?.(t, false) }
+        if (p.text || (p.parts?.[0]?.text)) { const t = p.text ?? p.parts[0].text; this.log('model', t); this.ev.onText?.(t, false) }
         const inline = p.inlineData ?? p.inline_data
         if (inline?.data) this.playPcm24k(inline.data)
       }
@@ -239,6 +257,7 @@ export class GeminiLive {
         else args = typeof c.args === 'string' ? JSON.parse(c.args) : c.args
       } catch { args = {} }
       if (typeof args !== 'object' || args === null) args = {}
+      this.log('tool', `${c.name} ${JSON.stringify(args).slice(0, 200)}`)
       this.ev.onTool?.(c.name, args)
       if (['addCanvasCard', 'arrangeCanvas', 'clearCanvas', 'searchDump'].includes(c.name)) {
         let res: string

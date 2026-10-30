@@ -13,6 +13,7 @@ export function Orb() {
   const [open, setOpen] = useState(false)
   const [transcript, setTranscript] = useState<string[]>([])
   const [toast, setToast] = useState<string>('')
+  const [hold, setHold] = useState(false)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const ampRef = useRef(0)
 
@@ -22,14 +23,17 @@ export function Orb() {
       onAmplitude: a => { ampRef.current = a; setAmp(a) },
       onText: (t, final) => { if (t) { setTranscript(ts => [...ts.slice(-30), t].slice(-30)); window.dispatchEvent(new CustomEvent('ns-voice-text', { detail: t })) } },
       onTool: (name, args) => {
-        const labels: Record<string, string> = { addCanvasCard: `Karte auf der Leinwand: ${String(args.title ?? '').slice(0, 40)}`, arrangeCanvas: 'Leinwand neu sortiert', searchDump: 'Lernmaterial durchsucht', clearCanvas: 'Leinwand geleert', startTimer: `Timer gestartet: ${args.durationMinutes ?? '?'} Min`, addFlashcard: `Karte angelegt: ${String(args.front ?? '').slice(0, 40)}…`, triggerBlurting: 'Blurting-Studio geöffnet', logKnowledgeGap: `Lücke notiert: ${args.concept ?? ''}` }
+        const labels: Record<string, string> = { startFeynman: `Feynman-Simulator geöffnet: ${String(args.topic ?? '').slice(0, 40)}`, addCanvasCard: `Karte auf der Leinwand: ${String(args.title ?? '').slice(0, 40)}`, arrangeCanvas: 'Leinwand neu sortiert', searchDump: 'Lernmaterial durchsucht', clearCanvas: 'Leinwand geleert', startTimer: `Timer gestartet: ${args.durationMinutes ?? '?'} Min`, addFlashcard: `Karte angelegt: ${String(args.front ?? '').slice(0, 40)}…`, triggerBlurting: 'Blurting-Studio geöffnet', logKnowledgeGap: `Lücke notiert: ${args.concept ?? ''}` }
         setToast(labels[name] ?? name); setTimeout(() => setToast(''), 3500)
         window.dispatchEvent(new CustomEvent('ns-live-tool', { detail: { name, args } }))
       },
       onError: e => { setToast(e); setTimeout(() => setToast(''), 5000) }
     })
+    const hh = (e: any) => setHold(!!e.detail)
+    window.addEventListener('ns-think-hold', hh)
+    ;(live as any)._hh = hh
     orbRef.current = live
-    return () => { live.stop(); orbRef.current = null }
+    return () => { window.removeEventListener('ns-think-hold', (live as any)._hh ?? (() => {})); live.stop(); orbRef.current = null }
   }, [])
 
   useEffect(() => {
@@ -61,6 +65,7 @@ export function Orb() {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {toast && <div className="card-surface px-3 py-2 text-xs text-zinc-200 shadow-xl max-w-xs">{toast}</div>}
+      {hold && <div className="card-surface px-3 py-2 text-xs text-amber-300 shadow-xl">Denk-Pause: der Tutor hört in der Zeit nichts</div>}
       {open && (
         <div className="card-surface w-80 p-3 shadow-2xl">
           <div className="flex items-center justify-between mb-2">

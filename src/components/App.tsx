@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Mic, Zap, Lightbulb, Timer as TimerIcon, FolderKanban, Layers, Grid2x2, Settings as SettingsIcon, Library, Frame } from 'lucide-react'
 import { Orb, orbRef } from './Orb'
 import { timerEngine, TimerState, MODES } from '../lib/bus'
-import { useGaps, db, newCard } from '../store'
+import { useGaps, db, newCard, getSettings } from '../store'
 import TimerView from '../views/TimerView'
 import BlurtingView from '../views/BlurtingView'
 import FeynmanView from '../views/FeynmanView'
@@ -43,7 +43,8 @@ export default function App() {
     const h = async (e: any) => {
       const { name, args } = e.detail
       if (name === 'startTimer') timerEngine.start(args.mode ?? 'pomodoro', args.durationMinutes)
-      else if (name === 'addFlashcard') await db.cards.add(newCard(args.front, args.back, args.difficulty ?? 3, { topic: args.topic }))
+      else if (name === 'addFlashcard') await db.cards.add(newCard(args.front, args.back, args.difficulty ?? 3, { topic: args.topic || getSettings().lastSubject || 'Tutor' }))
+      else if (name === 'startFeynman') { window.dispatchEvent(new CustomEvent('ns-open-feynman', { detail: args })); setPage('feynman') }
       else if (name === 'triggerBlurting') { window.dispatchEvent(new CustomEvent('ns-open-blurting', { detail: args })); setPage('blurting') }
       else if (name === 'logKnowledgeGap') await db.gaps.add({ subject: args.subject ?? 'Allgemein', concept: args.concept, note: args.note ?? '', relevance: 7, uncertainty: 7, createdAt: Date.now() })
     }
@@ -58,9 +59,16 @@ export default function App() {
       if (typing) return
       if (e.code === 'Space') { e.preventDefault(); timerEngine.toggle() }
       if (e.key.toLowerCase() === 'm') { const l = orbRef.current; if (l && l.state !== 'idle') { const m = !l.muted; l.setMuted(m) } }
+      if (e.key === 'Shift') { const l = orbRef.current; if (l && l.state !== 'idle' && !l.thinkHold) { l.thinkHold = true; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: true })) } }
     }
+    const up = (e: KeyboardEvent) => {
+      if (e.key === 'Shift' && orbRef.current?.thinkHold) { orbRef.current.thinkHold = false; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) }
+    }
+    const blur = () => { const l = orbRef.current; if (l?.thinkHold) { l.thinkHold = false; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) } }
     window.addEventListener('keydown', h)
-    return () => window.removeEventListener('keydown', h)
+    window.addEventListener('keyup', up)
+    window.addEventListener('blur', blur)
+    return () => { window.removeEventListener('keydown', h); window.removeEventListener('keyup', up); window.removeEventListener('blur', blur) }
   }, [])
 
   return (

@@ -6,6 +6,17 @@ const CLAMP = (s: string, n: number) => (s.length > n ? s.slice(0, n) + '…' : 
 export async function getContextForAI(maxChars = 30000): Promise<string> {
   const [docs, cards] = await Promise.all([db.docs.toArray(), db.canvasCards.toArray()])
   let out = ''
+  // past tutor conversations: the newest lines first, capped
+  const hist = await db.voiceLog.orderBy('id').reverse().limit(160).toArray()
+  if (hist.length) {
+    let vh = 'VERGANGENE GESPRÄCHE MIT DEM TUTOR (ältere zuerst):\n'
+    for (const l of hist.reverse()) {
+      const line = `${l.role === 'user' ? 'Schüler' : l.role === 'model' ? 'Tutor' : 'Aktion'}: ${CLAMP(l.text, 200)}\n`
+      if (vh.length + line.length > 12000) { vh += '(...frühere Gespräche gekürzt)\n'; break }
+      vh += line
+    }
+    out = vh + '\n' + out
+  }
   if (cards.length) {
     out += 'LEINWAND (Space) – aktuelle Karten:\n' + cards.map(c => {
       const opts = c.data?.options?.length ? ` | Optionen: ${c.data.options.join(' / ')} (richtig: ${c.data.options[c.data.answer ?? 0] ?? '?'})` : ''

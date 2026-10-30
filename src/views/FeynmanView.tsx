@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Lightbulb, Brain, AlertTriangle } from 'lucide-react'
 import { feynmanReview, FeynmanResult } from '../lib/ai'
 import { db, useSettings, saveSettings } from '../store'
