@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Mic, Zap, Lightbulb, Timer as TimerIcon, FolderKanban, Layers, Grid2x2, Settings as SettingsIcon } from 'lucide-react'
+import { Mic, Zap, Lightbulb, Timer as TimerIcon, FolderKanban, Layers, Grid2x2, Settings as SettingsIcon, Library, Frame } from 'lucide-react'
 import { Orb, orbRef } from './Orb'
 import { timerEngine, TimerState, MODES } from '../lib/bus'
 import { useGaps, db, newCard } from '../store'
@@ -11,6 +11,8 @@ import CardsView from '../views/CardsView'
 import ParetoView from '../views/ParetoView'
 import SettingsView from '../views/SettingsView'
 import VoiceView from '../views/VoiceView'
+import DumpView from '../views/DumpView'
+import SpaceView from '../views/SpaceView'
 
 const NAV = [
   { id: 'voice', label: 'Socratic Tutor', icon: Mic },
@@ -20,6 +22,8 @@ const NAV = [
   { id: 'subjects', label: 'Fächer', icon: FolderKanban },
   { id: 'cards', label: 'Flashcards', icon: Layers },
   { id: 'pareto', label: '80/20 Matrix', icon: Grid2x2 },
+  { id: 'wissen', label: 'Wissen', icon: Library },
+  { id: 'space', label: 'Space', icon: Frame },
   { id: 'settings', label: 'Einstellungen', icon: SettingsIcon }
 ] as const
 
@@ -94,6 +98,8 @@ export default function App() {
         {page === 'subjects' && <SubjectsView />}
         {page === 'cards' && <CardsView />}
         {page === 'pareto' && <ParetoView />}
+        {page === 'wissen' && <DumpView />}
+        {page === 'space' && <SpaceView />}
         {page === 'settings' && <SettingsView />}
       </main>
       <Orb />

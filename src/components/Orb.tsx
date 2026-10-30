@@ -22,7 +22,7 @@ export function Orb() {
       onAmplitude: a => { ampRef.current = a; setAmp(a) },
       onText: (t, final) => { if (t) { setTranscript(ts => [...ts.slice(-30), t].slice(-30)); window.dispatchEvent(new CustomEvent('ns-voice-text', { detail: t })) } },
       onTool: (name, args) => {
-        const labels: Record<string, string> = { startTimer: `Timer gestartet: ${args.durationMinutes ?? '?'} Min`, addFlashcard: `Karte angelegt: ${String(args.front ?? '').slice(0, 40)}…`, triggerBlurting: 'Blurting-Studio geöffnet', logKnowledgeGap: `Lücke notiert: ${args.concept ?? ''}` }
+        const labels: Record<string, string> = { addCanvasCard: `Karte auf der Leinwand: ${String(args.title ?? '').slice(0, 40)}`, arrangeCanvas: 'Leinwand neu sortiert', searchDump: 'Lernmaterial durchsucht', clearCanvas: 'Leinwand geleert', startTimer: `Timer gestartet: ${args.durationMinutes ?? '?'} Min`, addFlashcard: `Karte angelegt: ${String(args.front ?? '').slice(0, 40)}…`, triggerBlurting: 'Blurting-Studio geöffnet', logKnowledgeGap: `Lücke notiert: ${args.concept ?? ''}` }
         setToast(labels[name] ?? name); setTimeout(() => setToast(''), 3500)
         window.dispatchEvent(new CustomEvent('ns-live-tool', { detail: { name, args } }))
       },

@@ -1,5 +1,6 @@
 // Gemini Flash Lite layer: JSON evaluation calls + a ReAct agent loop
 import { getSettings } from '../store'
+import { getContextForAI } from './knowledge'
 
 const BASE = 'https://generativelanguage.googleapis.com/v1beta/models'
 export const FLASH_MODEL = 'gemini-flash-lite-latest'
@@ -68,7 +69,9 @@ export interface AgentTool {
 }
 
 export async function agentLoop(userIntent: string, tools: AgentTool[], maxSteps = 6, onStep?: (s: string) => void): Promise<string> {
-  const contents: any[] = [{ role: 'user', parts: [{ text: userIntent }] }]
+  let fullIntent = userIntent
+  try { fullIntent = `LERNKONTEXT DES SCHÜLERS (Ablage + Leinwand):\n${await getContextForAI(20000)}\n\nAUFGABE: ${userIntent}` } catch { /* offline ok */ }
+  const contents: any[] = [{ role: 'user', parts: [{ text: fullIntent }] }]
   for (let step = 0; step < maxSteps; step++) {
     const res = await fetch(`${BASE}/${FLASH_MODEL}:generateContent?key=${key()}`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },

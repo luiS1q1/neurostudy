@@ -8,6 +8,8 @@ export interface Card { id?: number; subjectId?: number; topic?: string; front: 
 export interface Gap { id?: number; subject: string; concept: string; note: string; relevance: number; uncertainty: number; createdAt: number }
 export interface AuditLog { id?: number; kind: 'blurt' | 'feynman'; topic: string; createdAt: number; score: number; summary: string }
 export interface SessionLog { id?: number; startedAt: number; minutes: number; mode: string; subject?: string }
+export interface Doc { id?: number; title: string; content: string; createdAt: number; size: number }
+export interface CanvasCard { id?: number; kind: 'text' | 'quiz' | 'diagram' | 'flashcard'; title: string; content: string; data?: { options?: string[]; answer?: number; svg?: string; back?: string }; x: number; y: number; w: number; createdAt: number }
 
 class NSDB extends Dexie {
   subjects!: Table<Subject, number>
@@ -15,6 +17,8 @@ class NSDB extends Dexie {
   gaps!: Table<Gap, number>
   audits!: Table<AuditLog, number>
   sessions!: Table<SessionLog, number>
+  docs!: Table<Doc, number>
+  canvasCards!: Table<CanvasCard, number>
   constructor() {
     super('neurostudy-os')
     this.version(1).stores({
@@ -24,6 +28,15 @@ class NSDB extends Dexie {
       audits: '++id, createdAt, kind',
       sessions: '++id, startedAt'
     })
+    this.version(2).stores({
+      subjects: '++id, name',
+      cards: '++id, subjectId, due, topic',
+      gaps: '++id, createdAt, subject',
+      audits: '++id, createdAt, kind',
+      sessions: '++id, startedAt',
+      docs: '++id, createdAt',
+      canvasCards: '++id, createdAt'
+    })
   }
 }
 export const db = new NSDB()
@@ -31,6 +44,8 @@ export const useSubjects = () => useLiveQuery(() => db.subjects.toArray(), []) ?
 export const useCards = () => useLiveQuery(() => db.cards.toArray(), []) ?? []
 export const useGaps = () => useLiveQuery(() => db.gaps.toArray(), []) ?? []
 export const useSessions = () => useLiveQuery(() => db.sessions.toArray(), []) ?? []
+export const useDocs = () => useLiveQuery(() => db.docs.toArray(), []) ?? []
+export const useCanvasCards = () => useLiveQuery(() => db.canvasCards.toArray(), []) ?? []
 export const newCard = (front: string, back: string, difficulty = 3, extra: Partial<Card> = {}): Card =>
   ({ front, back, difficulty, state: { ...NEW_STATE, due: Date.now() }, createdAt: Date.now(), ...extra })
 
