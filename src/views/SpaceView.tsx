@@ -8,9 +8,9 @@ export default function SpaceView() {
   const [zoom, setZoom] = useState(0.95)
   const panRef = useRef(pan); panRef.current = pan
   const zoomRef = useRef(zoom); zoomRef.current = zoom
-  const liveMirror = useRef(live); liveMirror.current = live
   const dragRef = useRef<{ id: number; sx: number; sy: number; ox: number; oy: number } | null>(null)
   const [live, setLive] = useState<Record<number, { x: number; y: number }>>({})
+  const liveMirror = useRef(live); liveMirror.current = live
   const [answers, setAnswers] = useState<Record<number, number>>({})
   const [flipped, setFlipped] = useState<Record<number, boolean>>({})
   const wrapRef = useRef<HTMLDivElement>(null)
