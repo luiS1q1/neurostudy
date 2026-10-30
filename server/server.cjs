@@ -1,4 +1,4 @@
-// NeuroStudy OS static server (zero dependencies). Usage: node server/server.js  [port defaults to 8788]
+// NeuroStudy OS static server (zero dependencies). Usage: node server/server.cjs  [port defaults to 8788]
 const http = require('http'), fs = require('fs'), path = require('path')
 const ROOT = path.join(__dirname, '..')
 const DIST = path.join(ROOT, 'dist')

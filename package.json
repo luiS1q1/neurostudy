@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
-  "scripts": { "dev": "vite", "build": "tsc --noEmit && vite build", "serve": "node server/server.js" },
+  "scripts": { "dev": "vite", "build": "tsc --noEmit && vite build", "serve": "node server/server.cjs" },
   "dependencies": {
     "dexie": "^4.0.8",
     "dexie-react-hooks": "^1.1.7",
