@@ -62,6 +62,10 @@ function decodeValue(f: { no: number; wire: number; data: any }[]): any {
 }
 
 export class GeminiLive {
+  // official Live models, tried in order until one accepts the setup
+  static CANDIDATES = ['models/gemini-live-2.5-flash-preview', 'models/gemini-2.0-flash-live-001', 'models/gemini-2.5-flash-native-audio-preview-09-2025']
+  private modelIdx = 0
+  private userStopped = false
   private ws: WebSocket | null = null
   private ctx: AudioContext | null = null
   private worklet: AudioWorkletNode | null = null
@@ -79,6 +83,8 @@ export class GeminiLive {
     if (this.state !== 'idle') return
     const key = getSettings().apiKey
     if (!key) { this.ev.onError?.('Kein API-Key. Erst unter Einstellungen hinterlegen.'); return }
+    this.userStopped = false
+    this.modelIdx = 0
     this.setState('connecting')
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
@@ -101,11 +107,12 @@ export class GeminiLive {
   }
   private openWs() {
     const key = getSettings().apiKey
+    const model = GeminiLive.CANDIDATES[this.modelIdx]
     this.ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`)
     this.ws.onopen = () => {
       this.ws!.send(JSON.stringify({
         setup: {
-          model: MODEL,
+          model,
           generationConfig: { responseModalities: ['AUDIO'] },
           systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
           tools: LIVE_TOOLS
@@ -120,7 +127,31 @@ export class GeminiLive {
         .then(async r => { const t = await r.text(); try { const j = JSON.parse(t); this.ev.onError?.(`Live-Fehler ${r.status}: ${j?.error?.message ?? t.slice(0, 200)}`) } catch { this.ev.onError?.(`Live-Fehler HTTP ${r.status}`) } })
         .catch(() => this.ev.onError?.('WebSocket zur Gemini Live API nicht erreichbar.'))
     }
-    this.ws.onclose = () => { if (this.state !== 'idle') { this.ev.onError?.('Verbindung getrennt.'); this.stop() } }
+    this.ws.onclose = (e) => {
+      if (this.userStopped) return
+      const detail = e.reason ? ` (${e.reason})` : ` (Code ${e.code})`
+      // server rejected the setup -> try the next official Live model
+      if (this.modelIdx < GeminiLive.CANDIDATES.length - 1) {
+        this.modelIdx += 1
+        this.ev.onError?.(`${model} abgelehnt${detail}, probiere ${GeminiLive.CANDIDATES[this.modelIdx]}…`)
+        this.openWs()
+        return
+      }
+      this.ev.onError?.('Verbindung getrennt' + detail)
+      this.probeModels(key)
+      this.stop()
+    }
+  }
+  // list which Live models the key actually has access to, and show it
+  private async probeModels(key: string) {
+    try {
+      const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}&pageSize=1000`)
+      const j = await r.json()
+      if (j.error) { this.ev.onError?.(`Model-Liste: ${j.error.message ?? 'Fehler'}`); return }
+      const live = (j.models ?? []).filter((m: any) => (m.name ?? '').toLowerCase().includes('live') || (m.supportedGenerationMethods ?? []).includes('bidiGenerateContent')).map((m: any) => m.name)
+      if (live.length) this.ev.onError?.(`Live-Modelle deines Keys: ${live.join(', ')}`)
+      else this.ev.onError?.('Dein Key listet keine Live-Modelle: Live API evtl. für diesen Key nicht verfügbar.')
+    } catch { /* ignore */ }
   }
   private async handle(data: any) {
     if (data instanceof Blob) data = await data.text()
@@ -203,6 +234,7 @@ export class GeminiLive {
   }
   interrupt() { this.clearPlayback() }
   stop() {
+    this.userStopped = true
     try { this.ws?.close() } catch {}
     this.clearPlayback()
     this.worklet?.disconnect(); this.ctx?.close(); this.micStream?.getTracks().forEach(t => t.stop())
