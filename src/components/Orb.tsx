@@ -65,7 +65,7 @@ export function Orb() {
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end gap-3">
       {toast && <div className="card-surface px-3 py-2 text-xs text-zinc-200 shadow-xl max-w-xs">{toast}</div>}
-      {hold && <div className="card-surface px-3 py-2 text-xs text-amber-300 shadow-xl">Denk-Pause: abgeschickt wird erst beim Loslassen</div>}
+      {hold && <div className="card-surface px-3 py-2 text-xs text-amber-300 shadow-xl">Denk-Pause: der Tutor wartet, bis du Shift loslässt</div>}
       {open && (
         <div className="card-surface w-80 p-3 shadow-2xl">
           <div className="flex items-center justify-between mb-2">

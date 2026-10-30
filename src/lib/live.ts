@@ -77,7 +77,8 @@ export class GeminiLive {
   private setupDone = false
   private sessionId = Date.now()
   thinkHold = false
-  private holdBuf: string[] = []
+  private actActive = false
+  private silenceFrames = 0
   private lastModelSignal = 0
   private awaitingTool = false
   private kicks = 0
@@ -108,9 +109,15 @@ export class GeminiLive {
       this.lastModelSignal = Date.now()
     }
   }
-  // Denk-Pause loslassen: der Worklet reicht den Puffer ab jetzt geordnet nach
+  // Denk-Pause loslassen: jetzt bekommt der Tutor das "der Schüler ist fertig"-Signal
   releaseHold() {
     this.thinkHold = false
+    if (this.actActive) { this.actActive = false; this.silenceFrames = 0; this.sendActivity('end') }
+  }
+  private sendActivity(kind: 'start' | 'end') {
+    if (this.ws && this.ws.readyState === 1 && this.setupDone) {
+      try { this.ws.send(JSON.stringify({ realtimeInput: kind === 'start' ? { activityStart: {} } : { activityEnd: {} } })) } catch { /* drop */ }
+    }
   }
   private sendAudio(b64: string) {
     if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
@@ -130,7 +137,8 @@ export class GeminiLive {
     this.modelIdx = 0
     this.sessionId = Date.now()
     this.thinkHold = false
-    this.holdBuf = []
+    this.actActive = false
+    this.silenceFrames = 0
     this.kicks = 0
     this.awaitingTool = false
     this.lastModelSignal = Date.now()
@@ -150,23 +158,18 @@ export class GeminiLive {
       const { pcm, rms } = e.data
       this.ev.onAmplitude?.(rms)
       const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)))
-      if (this.thinkHold) { // Denk-Pause: Audio puffern, nach dem Loslassen ordentlich nachreichen
-        this.holdBuf.push(b64)
-        if (this.holdBuf.length > 2400) this.holdBuf.shift()
-        return
-      }
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
-      if (this.holdBuf.length) {
-        // Nachlass: gepuffertes Audio zügig in Reihenfolge nachschieben, nie als Schwall (der Server verschluckt sonst den Anfang)
-        this.holdBuf.push(b64)
-        const burst = Math.min(3, Math.max(1, Math.ceil(this.holdBuf.length / 120)))
-        for (let i = 0; i < burst; i++) {
-          const d = this.holdBuf.shift()
-          if (d) this.sendAudio(d)
-        }
-        return
-      }
       this.sendAudio(b64)
+      // manuelle Aktivitätserkennung: der Ton geht immer durch, wir halten nur das "fertig"-Signal zurück
+      if (this.muted) return
+      if (rms > 0.05) {
+        this.silenceFrames = 0
+        if (!this.actActive) { this.actActive = true; this.sendActivity('start') }
+      } else if (this.actActive && !this.thinkHold) {
+        // Denk-Pause: das Ende deiner Rede wird zurückgehalten, der Tutor wartet
+        this.silenceFrames++
+        if (this.silenceFrames > 5) { this.actActive = false; this.sendActivity('end') }
+      }
     }
     this.openWs()
   }
@@ -214,7 +217,8 @@ export class GeminiLive {
           systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }, { text: ctx }] },
           tools: LIVE_TOOLS,
           inputAudioTranscription: {},
-          outputAudioTranscription: {}
+          outputAudioTranscription: {},
+          automaticActivityDetection: { disabled: true }
         }
       }))
       this.ev.onText?.(`[Live-Modell: ${model.replace('models/', '')}]`, true)
@@ -343,10 +347,7 @@ export class GeminiLive {
   }
   setMuted(m: boolean) {
     const was = this.muted; this.muted = m
-    if (m !== was && this.ws?.readyState === 1) {
-      // automatic activity detection expects the stream to be opened/closed explicitly
-      this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: m } }))
-    }
+    if (m && !was && this.actActive) { this.actActive = false; this.sendActivity('end') }
   }
   sendText(t: string) {
     if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: t }] }], turnComplete: true } }))
