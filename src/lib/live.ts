@@ -101,7 +101,7 @@ export class GeminiLive {
   }
   private openWs() {
     const key = getSettings().apiKey
-    this.ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiSetupSetup?key=${key}`)
+    this.ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`)
     this.ws.onopen = () => {
       this.ws!.send(JSON.stringify({
         setup: {
@@ -114,10 +114,16 @@ export class GeminiLive {
       this.setState('listening')
     }
     this.ws.onmessage = (e) => this.handle(e.data)
-    this.ws.onerror = () => this.ev.onError?.('WebSocket-Fehler zur Gemini Live API.')
+    this.ws.onerror = () => {
+      this.ev.onError?.('WebSocket-Handshake fehlgeschlagen, prüfe Details…')
+      fetch(`https://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`)
+        .then(async r => { const t = await r.text(); try { const j = JSON.parse(t); this.ev.onError?.(`Live-Fehler ${r.status}: ${j?.error?.message ?? t.slice(0, 200)}`) } catch { this.ev.onError?.(`Live-Fehler HTTP ${r.status}`) } })
+        .catch(() => this.ev.onError?.('WebSocket zur Gemini Live API nicht erreichbar.'))
+    }
     this.ws.onclose = () => { if (this.state !== 'idle') { this.ev.onError?.('Verbindung getrennt.'); this.stop() } }
   }
   private async handle(data: any) {
+    if (data instanceof Blob) data = await data.text()
     if (typeof data === 'string') return this.handleJson(JSON.parse(data))
     const fields = parseFields(new Uint8Array(data))
     for (const f of fields) {
@@ -127,6 +133,7 @@ export class GeminiLive {
     }
   }
   private handleJson(msg: any) {
+    if (msg.error) { this.ev.onError?.(`Gemini Live: ${msg.error.message ?? msg.error.status ?? JSON.stringify(msg.error).slice(0, 200)}`); return }
     if (msg.setupComplete) this.ev.onText?.('[Setup abgeschlossen]', true)
     if (msg.serverContent) this.parseServerContent(msg.serverContent)
     if (msg.toolCall) {
