@@ -1,11 +1,13 @@
 import { useState } from 'react'
-import { KeyRound, CheckCircle2, XCircle, Database } from 'lucide-react'
+import { KeyRound, CheckCircle2, XCircle, Database, Mic } from 'lucide-react'
 import { useSettings, saveSettings, db, useCards, useGaps } from '../store'
 
 export default function SettingsView() {
   const [settings, set] = useSettings()
   const [key, setKey] = useState(settings.apiKey)
   const [test, setTest] = useState<'ok' | 'fail' | null>(null)
+  const [models, setModels] = useState<string[]>([])
+  const [note, setNote] = useState('')
   const cards = useCards(); const gaps = useGaps()
 
   const verify = async () => {
@@ -28,6 +30,36 @@ export default function SettingsView() {
         </div>
         {test === 'ok' && <div className="text-xs text-emerald-400 mt-2 flex items-center gap-1"><CheckCircle2 size={12} /> Key gültig und gespeichert</div>}
         {test === 'fail' && <div className="text-xs text-red-400 mt-2 flex items-center gap-1"><XCircle size={12} /> Key ungültig oder Netzwerkfehler</div>}
+      </div>
+
+      <div className="card-surface p-6 mt-4">
+        <div className="text-sm font-medium flex items-center gap-2"><Mic size={14} className="text-indigo-400" /> Live-Modell (Voice)</div>
+        <div className="flex gap-2 mt-3">
+          <select className="field flex-1 text-xs" value={settings.liveModel} onChange={e => saveSettings({ liveModel: e.target.value })}>
+            <option value="">Automatisch (bestes verfügbares, 3.8 Live zuerst)</option>
+            {models.map(m => <option key={m} value={m}>{m}</option>)}
+          </select>
+          <button className="btn-ghost text-xs whitespace-nowrap" onClick={async () => {
+            setNote('Lade…')
+            try {
+              const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key || settings.apiKey}&pageSize=1000`)
+              const j = await r.json()
+              if (j.error) { setNote('Fehler: ' + (j.error.message ?? '?')); return }
+              const live: string[] = (j.models ?? []).map((m: any) => m.name).filter((n: string) => /live|native-audio/i.test(n)).map((n: string) => n.replace('models/', ''))
+              setModels(live)
+              setNote(live.length ? `${live.length} Live-Modelle gefunden. Zum Wechseln auswählen, dann Voice-Session neu starten.` : 'Keine Live-Modelle für diesen Key.')
+            } catch { setNote('Netzwerkfehler beim Laden.') }
+          }}>Modelle laden</button>
+        </div>
+        {settings.liveModel.includes('extended-thinking') && (
+          <div className="flex gap-2 mt-2 items-center text-xs text-zinc-400">
+            <span>Thinking-Level:</span>
+            <select className="field text-xs w-28" value={settings.thinkingLevel} onChange={e => saveSettings({ thinkingLevel: e.target.value })}>
+              {['low', 'medium', 'high'].map(l => <option key={l} value={l}>{l}</option>)}
+            </select>
+          </div>
+        )}
+        {note && <div className="text-xs text-zinc-500 mt-2">{note}</div>}
       </div>
 
       <div className="card-surface p-6 mt-4">

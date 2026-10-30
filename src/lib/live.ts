@@ -63,9 +63,9 @@ function decodeValue(f: { no: number; wire: number; data: any }[]): any {
 
 export class GeminiLive {
   // newest first; used when the key's model list can't be fetched
-  static CANDIDATES = ['models/gemini-3.8-flash-live', 'models/gemini-3.1-flash-live-preview', 'models/gemini-live-2.5-flash-preview', 'models/gemini-2.0-flash-live-001', 'models/gemini-2.5-flash-native-audio-preview-09-2025']
-  // preference when picking from the key's actual model list (3.8 live first, as requested)
-  static PREFERENCE = ['gemini-3.8-flash-live', 'gemini-3.8-flash-native-audio', 'gemini-3.1-flash-live', 'gemini-live-2.5-flash-preview', 'gemini-2.5-flash-native-audio', 'gemini-2.0-flash-live']
+  static CANDIDATES = ['models/gemini-3.8-live', 'models/gemini-3.8-live-extended-thinking', 'models/gemini-3.1-flash-live-preview', 'models/gemini-live-2.5-flash-preview', 'models/gemini-2.0-flash-live-001']
+  // preference when picking from the key's actual model list (3.8 Live first)
+  static PREFERENCE = ['gemini-3.8-live', 'gemini-3.1-flash-live', 'gemini-live-2.5-flash-preview', 'gemini-2.5-flash-native-audio', 'gemini-2.0-flash-live']
   private modelIdx = 0
   private rejected = new Set<string>()
   private nextStart = 0
@@ -131,7 +131,9 @@ export class GeminiLive {
   }
   private async openWs() {
     const key = getSettings().apiKey
-    const model = await this.pickModel(key)
+    const chosen = getSettings().liveModel
+    // explicit pick from Settings wins; on rejection the auto chain takes over
+    const model = chosen ? (chosen.startsWith('models/') ? chosen : 'models/' + chosen) : await this.pickModel(key)
     if (!model) {
       this.ev.onError?.('Kein nutzbares Live-Modell für diesen Key gefunden.')
       this.probeModels(key)
@@ -143,7 +145,9 @@ export class GeminiLive {
       this.ws!.send(JSON.stringify({
         setup: {
           model,
-          generationConfig: { responseModalities: ['AUDIO'] },
+          generationConfig: model.includes('extended-thinking')
+            ? { responseModalities: ['AUDIO'], thinkingConfig: { thinkingLevel: (getSettings().thinkingLevel || 'low') as any } }
+            : { responseModalities: ['AUDIO'] },
           systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
           tools: LIVE_TOOLS
         }
@@ -190,6 +194,8 @@ export class GeminiLive {
   private handleJson(msg: any) {
     if (msg.error) { this.ev.onError?.(`Gemini Live: ${msg.error.message ?? msg.error.status ?? JSON.stringify(msg.error).slice(0, 200)}`); return }
     if (msg.setupComplete) this.ev.onText?.('[Setup abgeschlossen]', true)
+    // extended-thinking models: turnComplete no longer means idle, only IDLE does
+    if (msg.interactionStatus === 'IDLE' && this.playing === 0 && this.state !== 'idle') this.setState('listening')
     if (msg.serverContent) this.parseServerContent(msg.serverContent)
     if (msg.toolCall) {
       const fc = msg.toolCall.functionCalls?.[0]

@@ -35,8 +35,8 @@ export const newCard = (front: string, back: string, difficulty = 3, extra: Part
   ({ front, back, difficulty, state: { ...NEW_STATE, due: Date.now() }, createdAt: Date.now(), ...extra })
 
 // ---- settings (localStorage) ----
-export interface Settings { apiKey: string; micOnStart: boolean; lastSubject: string }
-const DEFAULTS: Settings = { apiKey: '', micOnStart: false, lastSubject: '' }
+export interface Settings { apiKey: string; micOnStart: boolean; lastSubject: string; liveModel: string; thinkingLevel: string }
+const DEFAULTS: Settings = { apiKey: '', micOnStart: false, lastSubject: '', liveModel: '', thinkingLevel: 'low' }
 let _settings: Settings = { ...DEFAULTS, ...(JSON.parse(localStorage.getItem('ns_settings') || '{}') as Partial<Settings>) }
 const listeners = new Set<() => void>()
 export function getSettings(): Settings { return _settings }
