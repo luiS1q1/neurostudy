@@ -108,13 +108,13 @@ export class GeminiLive {
       this.lastModelSignal = Date.now()
     }
   }
-  // Denk-Pause loslassen: den gepufferten Ton nachschieben, dann streamt es wieder live
+  // Denk-Pause loslassen: der Worklet reicht den Puffer ab jetzt geordnet nach
   releaseHold() {
     this.thinkHold = false
-    const buf = this.holdBuf
-    this.holdBuf = []
+  }
+  private sendAudio(b64: string) {
     if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
-      for (const d of buf) { try { this.ws.send(JSON.stringify({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: d } } })) } catch { break } }
+      try { this.ws.send(JSON.stringify({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: b64 } } })) } catch { /* drop */ }
     }
   }
   // persistent conversation log: every session lands in IndexedDB and feeds the next ones
@@ -149,16 +149,24 @@ export class GeminiLive {
     this.worklet.port.onmessage = (e) => {
       const { pcm, rms } = e.data
       this.ev.onAmplitude?.(rms)
-      if (this.thinkHold) { // Denk-Pause: Audio puffern, erst beim Loslassen abgeschickt
-        this.holdBuf.push(btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))))
-        if (this.holdBuf.length > 1200) this.holdBuf.shift()
+      const b64 = btoa(String.fromCharCode(...new Uint8Array(pcm.buffer)))
+      if (this.thinkHold) { // Denk-Pause: Audio puffern, nach dem Loslassen ordentlich nachreichen
+        this.holdBuf.push(b64)
+        if (this.holdBuf.length > 2400) this.holdBuf.shift()
         return
       }
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
-      if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
-        // current wire format: realtimeInput.audio (mediaChunks is the legacy field the 3.x models ignore)
-        this.ws.send(JSON.stringify({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) } } }))
+      if (this.holdBuf.length) {
+        // Nachlass: gepuffertes Audio zügig in Reihenfolge nachschieben, nie als Schwall (der Server verschluckt sonst den Anfang)
+        this.holdBuf.push(b64)
+        const burst = Math.min(3, Math.max(1, Math.ceil(this.holdBuf.length / 120)))
+        for (let i = 0; i < burst; i++) {
+          const d = this.holdBuf.shift()
+          if (d) this.sendAudio(d)
+        }
+        return
       }
+      this.sendAudio(b64)
     }
     this.openWs()
   }
