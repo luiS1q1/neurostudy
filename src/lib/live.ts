@@ -77,6 +77,7 @@ export class GeminiLive {
   private setupDone = false
   private sessionId = Date.now()
   thinkHold = false
+  private holdBuf: string[] = []
   private rejected = new Set<string>()
   private nextStart = 0
   private userStopped = false
@@ -92,6 +93,15 @@ export class GeminiLive {
   ev: LiveEvents
   constructor(ev: LiveEvents = {}) { this.ev = ev }
   private setState(s: LiveState) { this.state = s; this.ev.onState?.(s) }
+  // Denk-Pause loslassen: den gepufferten Ton nachschieben, dann streamt es wieder live
+  releaseHold() {
+    this.thinkHold = false
+    const buf = this.holdBuf
+    this.holdBuf = []
+    if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
+      for (const d of buf) { try { this.ws.send(JSON.stringify({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: d } } })) } catch { break } }
+    }
+  }
   // persistent conversation log: every session lands in IndexedDB and feeds the next ones
   private log(role: 'user' | 'model' | 'tool', text: string) {
     try { db.voiceLog.add({ sessionId: this.sessionId, role, text: String(text).slice(0, 2000), at: Date.now() }) } catch { /* offline ok */ }
@@ -105,6 +115,7 @@ export class GeminiLive {
     this.modelIdx = 0
     this.sessionId = Date.now()
     this.thinkHold = false
+    this.holdBuf = []
     this.setState('connecting')
     try {
       this.micStream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } })
@@ -118,7 +129,11 @@ export class GeminiLive {
     this.worklet.port.onmessage = (e) => {
       const { pcm, rms } = e.data
       this.ev.onAmplitude?.(rms)
-      if (this.thinkHold) return // Denk-Pause: nichts senden, kein Barge-in, Modell unterbricht nicht
+      if (this.thinkHold) { // Denk-Pause: Audio puffern, erst beim Loslassen abgeschickt
+        this.holdBuf.push(btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))))
+        if (this.holdBuf.length > 1200) this.holdBuf.shift()
+        return
+      }
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
       if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
         // current wire format: realtimeInput.audio (mediaChunks is the legacy field the 3.x models ignore)

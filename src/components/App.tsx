@@ -62,9 +62,9 @@ export default function App() {
       if (e.key === 'Shift') { const l = orbRef.current; if (l && l.state !== 'idle' && !l.thinkHold) { l.thinkHold = true; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: true })) } }
     }
     const up = (e: KeyboardEvent) => {
-      if (e.key === 'Shift' && orbRef.current?.thinkHold) { orbRef.current.thinkHold = false; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) }
+      if (e.key === 'Shift' && orbRef.current?.thinkHold) { orbRef.current.releaseHold(); window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) }
     }
-    const blur = () => { const l = orbRef.current; if (l?.thinkHold) { l.thinkHold = false; window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) } }
+    const blur = () => { const l = orbRef.current; if (l?.thinkHold) { l.releaseHold(); window.dispatchEvent(new CustomEvent('ns-think-hold', { detail: false })) } }
     window.addEventListener('keydown', h)
     window.addEventListener('keyup', up)
     window.addEventListener('blur', blur)
