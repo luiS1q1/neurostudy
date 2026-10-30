@@ -223,7 +223,7 @@ export class GeminiLive {
           tools: LIVE_TOOLS,
           inputAudioTranscription: {},
           outputAudioTranscription: {},
-          realtimeInputConfig: { automaticActivityDetection: { disabled: true } }
+          realtimeInputConfig: { automaticActivityDetection: { disabled: true }, turnCoverage: 'TURN_INCLUDES_ALL_INPUT' }
         }
       }))
       this.ev.onText?.(`[Live-Modell: ${model.replace('models/', '')}]`, true)
