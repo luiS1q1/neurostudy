@@ -67,6 +67,7 @@ export class GeminiLive {
   // preference when picking from the key's actual model list (3.8 Live first)
   static PREFERENCE = ['gemini-3.8-live', 'gemini-3.1-flash-live', 'gemini-live-2.5-flash-preview', 'gemini-2.5-flash-native-audio', 'gemini-2.0-flash-live']
   private modelIdx = 0
+  private setupDone = false
   private rejected = new Set<string>()
   private nextStart = 0
   private userStopped = false
@@ -103,8 +104,9 @@ export class GeminiLive {
       const { pcm, rms } = e.data
       this.ev.onAmplitude?.(rms)
       if (this.state === 'speaking' && rms > 0.06) this.bargeIn()
-      if (this.ws && this.ws.readyState === 1 && !this.muted) {
-        this.ws.send(JSON.stringify({ realtimeInput: { mediaChunks: [{ mimeType: 'audio/pcm;rate=16000', data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) }] } }))
+      if (this.ws && this.ws.readyState === 1 && this.setupDone && !this.muted) {
+        // current wire format: realtimeInput.audio (mediaChunks is the legacy field the 3.x models ignore)
+        this.ws.send(JSON.stringify({ realtimeInput: { audio: { mimeType: 'audio/pcm;rate=16000', data: btoa(String.fromCharCode(...new Uint8Array(pcm.buffer))) } } }))
       }
     }
     this.openWs()
@@ -142,6 +144,7 @@ export class GeminiLive {
     }
     this.ws = new WebSocket(`wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent?key=${key}`)
     this.ws.onopen = () => {
+      this.setupDone = false
       this.ws!.send(JSON.stringify({
         setup: {
           model,
@@ -186,17 +189,21 @@ export class GeminiLive {
     if (typeof data === 'string') return this.handleJson(JSON.parse(data))
     const fields = parseFields(new Uint8Array(data))
     for (const f of fields) {
-      if (f.no === 1) this.ev.onText?.('[Setup abgeschlossen]', true)
+      if (f.no === 1) { this.setupDone = true; this.ev.onText?.('[Setup abgeschlossen]', true) }
       else if (f.no === 2) this.parseServerContent(parseFields(f.data as Uint8Array))
       else if (f.no === 3) this.parseToolCall(parseFields(f.data as Uint8Array))
     }
   }
   private handleJson(msg: any) {
     if (msg.error) { this.ev.onError?.(`Gemini Live: ${msg.error.message ?? msg.error.status ?? JSON.stringify(msg.error).slice(0, 200)}`); return }
-    if (msg.setupComplete) this.ev.onText?.('[Setup abgeschlossen]', true)
+    if (msg.setupComplete) { this.setupDone = true; this.ev.onText?.('[Setup abgeschlossen]', true) }
     // extended-thinking models: turnComplete no longer means idle, only IDLE does
     if (msg.interactionStatus === 'IDLE' && this.playing === 0 && this.state !== 'idle') this.setState('listening')
     if (msg.serverContent) this.parseServerContent(msg.serverContent)
+    if (msg.toolCall) { // diag: any other top-level message shows its keys
+      const known = ['serverContent', 'toolCall', 'setupComplete', 'interactionStatus', 'usageMetadata', 'goAway']
+      if (!known.some(k => k in msg)) this.ev.onText?.(`[Server: ${Object.keys(msg).join(',')}]`, true)
+    }
     if (msg.toolCall) {
       const fc = msg.toolCall.functionCalls?.[0]
       if (fc) { this.ev.onTool?.(fc.name, typeof fc.args === 'string' ? JSON.parse(fc.args) : fc.args); this.sendToolResponse(fc.name, fc.id) }
@@ -261,7 +268,13 @@ export class GeminiLive {
     this.queue = []; this.playing = 0; this.nextStart = 0
     if (this.state === 'speaking') this.setState('listening')
   }
-  setMuted(m: boolean) { this.muted = m }
+  setMuted(m: boolean) {
+    const was = this.muted; this.muted = m
+    if (m !== was && this.ws?.readyState === 1) {
+      // automatic activity detection expects the stream to be opened/closed explicitly
+      this.ws.send(JSON.stringify({ realtimeInput: { audioStreamEnd: m } }))
+    }
+  }
   sendText(t: string) {
     if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ clientContent: { turns: [{ role: 'user', parts: [{ text: t }] }], turnComplete: true } }))
   }
